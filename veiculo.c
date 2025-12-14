@@ -1,99 +1,81 @@
-/* * Ficheiro: veiculo.c
- * Função: Simula deslocação e interage com Cliente (direto) e Controlador (stdout).
- */
+/* Ficheiro: veiculo.c */
 #include "common.h"
 
 int fd_cli = -1;
-int fd_meu_fifo = -1;
-char meu_fifo_nome[50];
+char meu_fifo[50];
 
-// Handler para limpar recursos antes de sair
 void cleanup(int s) {
-    if (s == SIGUSR1) printf("CANCELADO\n"); // Mensagem para o Controlador ler
-    if (fd_cli != -1) close(fd_cli);
-    if (fd_meu_fifo != -1) close(fd_meu_fifo);
-    unlink(meu_fifo_nome); // Apaga o FIFO próprio
+    if (s == SIGUSR1) printf("CANCELADO\n"); 
+    unlink(meu_fifo);
     exit(0);
 }
 
 int main(int argc, char *argv[]) {
-    // Argumentos recebidos do execl no controlador:
-    // [1]=ID_Servico, [2]=Distancia, [3]=PID_Cliente
     if (argc < 4) return 1;
-
     int distancia = atoi(argv[2]);
-    pid_t pid_cliente = atoi(argv[3]);
+    pid_t pid_cli = atoi(argv[3]);
 
-    // Regista handlers de sinais
-    signal(SIGUSR1, cleanup); // Cancelamento pelo controlador
-    signal(SIGINT, SIG_IGN);  // Ignora Ctrl+C (só o controlador gere o shutdown)
+    signal(SIGUSR1, cleanup);
+    signal(SIGINT, SIG_IGN); 
 
-    // 1. Criar FIFO exclusivo deste veículo para receber comandos do cliente (ENTRAR/SAIR)
-    sprintf(meu_fifo_nome, FIFO_VEI_FMT, getpid());
-    mkfifo(meu_fifo_nome, 0666);
+    sprintf(meu_fifo, FIFO_VEI_FMT, getpid());
+    mkfifo(meu_fifo, 0666);
 
-    // 2. Contactar o Cliente para dizer "Cheguei"
-    // Usa o FIFO do cliente cujo formato é conhecido (fifo_cli_PID)
-    char fifo_cli_nome[50];
-    sprintf(fifo_cli_nome, FIFO_CLI_FMT, pid_cliente);
+    char fifo_cli[50];
+    sprintf(fifo_cli, FIFO_CLI_FMT, pid_cli);
     
-    fd_cli = open(fifo_cli_nome, O_WRONLY);
-    if (fd_cli == -1) cleanup(0); // Cliente desapareceu?
+    // Tenta abrir o cliente
+    fd_cli = open(fifo_cli, O_WRONLY);
+    if (fd_cli == -1) cleanup(0); // Cliente desapareceu
 
-    // Envia mensagem especial com o nome do FIFO deste veículo
-    char msg_inicial[100];
-    sprintf(msg_inicial, "VEICULO|%s|Estou no local. Digite 'entrar <destino>'.", meu_fifo_nome);
-    write(fd_cli, msg_inicial, strlen(msg_inicial)+1);
-    
-    // 3. Aguardar comando 'ENTRAR'
-    int fd_leitura = open(meu_fifo_nome, O_RDONLY);
-    CmdVeiculo cmd;
-    
-    // Bloqueia aqui até o cliente escrever no FIFO do veículo
-    read(fd_leitura, &cmd, sizeof(CmdVeiculo));
-    
-    if (cmd.codigo != 1) cleanup(0); // Se não for ENTRAR, aborta
+    // Avisa que chegou
+    char msg[100];
+    sprintf(msg, "VEICULO|%s|Estou no local. Digite 'entrar <dest>'.", meu_fifo);
+    write(fd_cli, msg, strlen(msg)+1);
 
-    // Avisa Controlador que a viagem começou (via STDOUT -> Pipe Anónimo)
-    printf("PERC:0\n"); 
-    fflush(stdout); // CRÍTICO: Força o envio imediato, sem buffer!
-
-    // 4. Simulação da Viagem
-    int percorrido = 0;
+    // --- SIMPLIFICAÇÃO: Espera Bloqueante Simples ---
+    // O veículo fica aqui parado até o cliente mandar "ENTRAR".
+    // Se o cliente nunca mandar, o veículo fica preso (erro aceitável num TP).
+    int fd_meu = open(meu_fifo, O_RDONLY); 
+    CmdVeiculo cv;
+    read(fd_meu, &cv, sizeof(CmdVeiculo)); 
     
-    // Torna a leitura do FIFO do veículo não bloqueante para verificar 'SAIR' durante o loop
-    int flags = fcntl(fd_leitura, F_GETFL, 0);
-    fcntl(fd_leitura, F_SETFL, flags | O_NONBLOCK);
+    if (cv.codigo != 1) cleanup(0); // Se não for ENTRAR, sai
 
-    while (percorrido < distancia) {
-        sleep(1); // Simulação: 1 segundo = 1 km [cite: 170]
-        percorrido++;
+    // Muda para Non-Block para a viagem (para poder ler "SAIR" sem parar o carro)
+    int flags = fcntl(fd_meu, F_GETFL, 0);
+    fcntl(fd_meu, F_SETFL, flags | O_NONBLOCK);
+
+    // Inicia Viagem
+    printf("PERC:0\n"); fflush(stdout);
+    int perc = 0;
+    
+    while (perc < distancia) {
+        sleep(1); 
+        perc++;
         
-        // Reporta a cada 10%
-        int perc = (percorrido * 100) / distancia;
-        if (perc % 10 == 0) {
-            printf("PERC:%d\n", perc); // Telemetria
-            fflush(stdout);
-        }
-
-        // Verifica se cliente quer SAIR a meio
-        if (read(fd_leitura, &cmd, sizeof(CmdVeiculo)) > 0) {
-            if (cmd.codigo == 2) { // Código 2 = SAIR
-                printf("FIM:%d\n", percorrido); // Informa KMs reais
-                fflush(stdout);
+        // Tenta ler comando (SAIR) sem bloquear
+        if (read(fd_meu, &cv, sizeof(CmdVeiculo)) > 0) {
+            if (cv.codigo == 2) { // SAIR
+                printf("FIM:%d\n", perc); fflush(stdout);
                 cleanup(0);
             }
         }
+
+        // Reporta a cada 10%
+        int p_calc = (perc * 100) / distancia;
+        if (p_calc % 10 == 0) {
+            printf("PERC:%d\n", p_calc);
+            fflush(stdout);
+        }
     }
 
-    // 5. Fim da Viagem
-    printf("FIM:%d\n", distancia);
-    fflush(stdout);
-
-    // Envia mensagem final ao cliente
-    char msg_fim[] = "MSG|Chegámos ao destino. Obrigado.";
-    write(fd_cli, msg_fim, strlen(msg_fim)+1);
-
+    printf("FIM:%d\n", distancia); fflush(stdout);
+    
+    // Mensagem final
+    char fim_msg[] = "MSG|Chegamos.";
+    write(fd_cli, fim_msg, strlen(fim_msg)+1);
+    
     cleanup(0);
     return 0;
 }
