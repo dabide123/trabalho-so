@@ -1,4 +1,3 @@
-/* Ficheiro: cliente.c */
 #include "common.h"
 #include <pthread.h>
 
@@ -8,14 +7,13 @@ int running = 1;
 
 void *listener(void *arg) {
     (void)arg;
-    int fd = open(meu_fifo, O_RDONLY);
+    int fd = open(meu_fifo, O_RDONLY);+
     char buf[512];
     
     while (running) {
         int n = read(fd, buf, sizeof(buf)-1);
         if (n > 0) {
             buf[n] = '\0';
-            // Simplificação: Não limpa a linha atual, o texto pode encavalar no prompt
             if (strncmp(buf, "VEICULO|", 8) == 0) {
                 char *tk = strtok(buf, "|"); 
                 tk = strtok(NULL, "|");
@@ -53,7 +51,6 @@ int main(int argc, char *argv[]) {
 
     char linha[100], cmd[20], a1[20], a2[20], a3[20];
     while (running && fgets(linha, 100, stdin)) {
-        // Parsing simplificado - pode falhar se input for estranho
         sscanf(linha, "%s %s %s %s", cmd, a1, a2, a3);
 
         if (strcmp(cmd, "agendar") == 0) {
@@ -82,7 +79,6 @@ int main(int argc, char *argv[]) {
         else if (strcmp(cmd, "terminar") == 0) {
             running = 0;
         }
-        // Faltam comandos como consultar/cancelar (funcionalidade "em falta")
         printf("> ");
     }
     

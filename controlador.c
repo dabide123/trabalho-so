@@ -1,4 +1,3 @@
-/* Ficheiro: controlador.c */
 #include "common.h"
 
 #define MAX_CLI 30
@@ -10,7 +9,6 @@ typedef struct {
     int ocupado;    
     int id_servico; 
     int percentagem;
-    // Buffer removido - abordagem mais simples
 } Veiculo;
 
 typedef struct {
@@ -20,7 +18,7 @@ typedef struct {
     int distancia;
     pid_t pid_cliente;
     char username[20];
-    int estado;     // 0=Pendente, 1=Em Curso, 2=Concluido
+    int estado;     
 } Servico;
 
 typedef struct {
@@ -29,7 +27,6 @@ typedef struct {
     int ativo;
 } Utilizador;
 
-// Globais
 Veiculo *frota;
 int n_veiculos = 0;
 Servico servicos[MAX_SERVICOS];
@@ -72,9 +69,9 @@ void lanca_veiculo(int slot_frota, int slot_servico) {
     if (pipe(p) == -1) return;
 
     pid_t pid = fork();
-    if (pid == 0) { // Filho
+    if (pid == 0) { 
         close(p[0]);
-        dup2(p[1], STDOUT_FILENO); // Redireciona stdout para pipe
+        dup2(p[1], STDOUT_FILENO); 
         close(p[1]);
         
         char arg_id[10], arg_dist[10], arg_cli[20];
@@ -84,7 +81,7 @@ void lanca_veiculo(int slot_frota, int slot_servico) {
         
         execl("./veiculo", "veiculo", arg_id, arg_dist, arg_cli, NULL);
         exit(1);
-    } else { // Pai
+    } else { 
         close(p[1]);
         set_nonblock(p[0]);
         frota[slot_frota].pid = pid;
@@ -109,7 +106,6 @@ int main() {
     signal(SIGINT, termina_sistema);
 
     int fd_srv = open(FIFO_SRV, O_RDONLY | O_NONBLOCK);
-    // Keep-alive mantido para não dar erro grave
     int keep_alive_fd = open(FIFO_SRV, O_WRONLY); 
     (void)keep_alive_fd;
 
@@ -119,12 +115,10 @@ int main() {
     time_t last_tick = time(NULL);
 
     while (running) {
-        // --- 1. Gestão de Tempo ---
         if (time(NULL) > last_tick) {
             tempo_simulado++; 
             last_tick = time(NULL);
             
-            // Verifica agendamentos
             for (int i = 0; i < MAX_SERVICOS; i++) {
                 if (servicos[i].id != 0 && servicos[i].estado == 0 && servicos[i].hora <= tempo_simulado) {
                     for (int v = 0; v < n_veiculos; v++) {
@@ -138,7 +132,6 @@ int main() {
             }
         }
 
-        // --- 2. Comandos Admin (Simplificados) ---
         char cmd_buf[50];
         if (read(STDIN_FILENO, cmd_buf, sizeof(cmd_buf)-1) > 0) {
             strtok(cmd_buf, "\n");
@@ -147,10 +140,8 @@ int main() {
                     if(servicos[i].id != 0) printf("ID:%d User:%s Est:%d\n", servicos[i].id, servicos[i].username, servicos[i].estado);
             }
             else if (strcmp(cmd_buf, "terminar") == 0) termina_sistema(0);
-            // Outros comandos "menos importantes" omitidos propositadamente
         }
 
-        // --- 3. Pedidos Clientes ---
         PedidoCliente p;
         if (read(fd_srv, &p, sizeof(PedidoCliente)) == sizeof(PedidoCliente)) {
             if (strcmp(p.comando, "LOGIN") == 0) {
@@ -175,15 +166,12 @@ int main() {
             }
         }
 
-        // --- 4. Leitura dos Veículos (SIMPLIFICADA / MENOS ROBUSTA) ---
-        // Lê diretamente para um buffer pequeno. Assume que a mensagem vem inteira.
         char vbuf[50];
         for (int v = 0; v < n_veiculos; v++) {
             if (frota[v].ocupado) {
                 int n = read(frota[v].fd_leitura, vbuf, sizeof(vbuf)-1);
                 if (n > 0) {
                     vbuf[n] = '\0';
-                    // Assume que "FIM:" ou "PERC:" vêm no início da leitura
                     if (strncmp(vbuf, "PERC:", 5) == 0) {
                         frota[v].percentagem = atoi(vbuf + 5);
                         printf("[INFO] Veiculo %d: %d%% da viagem.\n", v, frota[v].percentagem);
@@ -191,18 +179,17 @@ int main() {
                     else if (strncmp(vbuf, "FIM:", 4) == 0) {
                         printf("[FIM] Servico %d acabou.\n", frota[v].id_servico);
                         
-                        // Atualiza estado do serviço
                         for(int s=0; s<MAX_SERVICOS; s++) 
                             if(servicos[s].id == frota[v].id_servico) servicos[s].estado = 2;
 
                         close(frota[v].fd_leitura);
                         frota[v].ocupado = 0;
-                        waitpid(frota[v].pid, NULL, 0); // Limpa o processo
+                        waitpid(frota[v].pid, NULL, 0); 
                     }
                 }
             }
         }
-        usleep(10000); // Pausa mantida para não queimar CPU
+        usleep(10000); 
     }
     return 0;
 }
